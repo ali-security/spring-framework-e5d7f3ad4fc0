@@ -18,15 +18,22 @@ package org.springframework.web.reactive.function.server;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpMethod;
 import org.springframework.web.testfixture.http.server.reactive.MockServerHttpRequest;
 import org.springframework.web.testfixture.server.MockServerWebExchange;
 
@@ -93,6 +100,57 @@ public class PathResourceLookupFunctionTests {
 		StepVerifier.create(result)
 				.expectComplete()
 				.verify();
+	}
+
+	@Test  // CVE-2024-38819
+	public void rejectsEncodedPathTraversal(@TempDir Path temporaryFolder) throws Exception {
+		Files.write(temporaryFolder.resolve("secret.txt"), "secret".getBytes(StandardCharsets.UTF_8));
+		Path locationFolder = Files.createDirectory(temporaryFolder.resolve("public"));
+		Files.write(locationFolder.resolve("response.txt"), "public".getBytes(StandardCharsets.UTF_8));
+
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**",
+				new FileSystemResource(locationFolder.toString() + "/"));
+
+		// A legitimate resource under the location is still served
+		StepVerifier.create(function.apply(request("/resources/response.txt")))
+				.expectNextCount(1)
+				.expectComplete()
+				.verify();
+
+		// Encoded "//../": StringUtils#cleanPath cancels the ".." against the empty
+		// path segment, while the file system does not, escaping the location
+		expectEmpty(function, "/resources/%2F%2F..%2Fsecret.txt");
+		expectEmpty(function, "/resources/%2F%2F%2E%2E%2Fsecret.txt");
+		expectEmpty(function, "/resources/%252F%252F%252E%252E%252Fsecret.txt");
+
+		// Encoded and double encoded "../"
+		expectEmpty(function, "/resources/%2E%2E%2Fsecret.txt");
+		expectEmpty(function, "/resources/%252E%252E%252Fsecret.txt");
+		expectEmpty(function, "/resources/%2E%2E%2F%2E%2E%2Fsecret.txt");
+	}
+
+	@Test  // CVE-2024-38819
+	public void rejectsEncodedBackslashPathTraversal() throws Exception {
+		ClassPathResource location = new ClassPathResource("org/springframework/web/reactive/function/server/");
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**", location);
+
+		// Encoded "\\..\": StringUtils#cleanPath cancels the ".." against the empty
+		// path segment, while a file system with "\" as separator does not
+		expectEmpty(function, "/resources/%5C%5C..%5Cresponse.txt");
+		expectEmpty(function, "/resources/%5C%5C%2E%2E%5Cresponse.txt");
+	}
+
+	private void expectEmpty(PathResourceLookupFunction function, String requestUri) {
+		StepVerifier.create(function.apply(request(requestUri)))
+				.expectComplete()
+				.verify();
+	}
+
+	private ServerRequest request(String requestUri) {
+		// Use the URI variant to keep the raw, encoded request path as-is
+		MockServerHttpRequest mockRequest =
+				MockServerHttpRequest.method(HttpMethod.GET, URI.create("https://localhost" + requestUri)).build();
+		return new DefaultServerRequest(MockServerWebExchange.from(mockRequest), Collections.emptyList());
 	}
 
 	@Test

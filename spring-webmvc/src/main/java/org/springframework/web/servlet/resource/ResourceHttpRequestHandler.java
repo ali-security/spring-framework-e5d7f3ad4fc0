@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -63,6 +64,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.support.WebContentGenerator;
+import org.springframework.web.util.UriUtils;
 import org.springframework.web.util.UrlPathHelper;
 
 /**
@@ -540,6 +542,12 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 					HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE + "' is not set");
 		}
 
+		// Check the raw path as well: processPath may decode and normalize away
+		// escape sequences that need to be validated in their encoded form.
+		if (isInvalidEncodedPath(path)) {
+			return null;
+		}
+
 		path = processPath(path);
 		if (!StringUtils.hasText(path) || isInvalidPath(path)) {
 			return null;
@@ -573,7 +581,8 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 	protected String processPath(String path) {
 		path = StringUtils.replace(path, "\\", "/");
 		path = cleanDuplicateSlashes(path);
-		return cleanLeadingSlash(path);
+		path = cleanLeadingSlash(path);
+		return normalizePath(path);
 	}
 
 	private String cleanDuplicateSlashes(String path) {
@@ -613,6 +622,30 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 			}
 		}
 		return (slash ? "/" : "");
+	}
+
+	private static String normalizePath(String path) {
+		String result = path;
+		result = decode(result);
+		if (result.contains("%")) {
+			result = decode(result);
+		}
+		if (!StringUtils.hasText(result)) {
+			return result;
+		}
+		if (result.contains("../")) {
+			return StringUtils.cleanPath(result);
+		}
+		return path;
+	}
+
+	private static String decode(String path) {
+		try {
+			return UriUtils.decode(path, StandardCharsets.UTF_8);
+		}
+		catch (Exception ex) {
+			return "";
+		}
 	}
 
 	/**
@@ -675,7 +708,7 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 				return true;
 			}
 		}
-		if (path.contains("..") && StringUtils.cleanPath(path).contains("../")) {
+		if (path.contains("../")) {
 			if (logger.isWarnEnabled()) {
 				logger.warn("Path contains \"../\" after call to StringUtils#cleanPath: [" + path + "]");
 			}

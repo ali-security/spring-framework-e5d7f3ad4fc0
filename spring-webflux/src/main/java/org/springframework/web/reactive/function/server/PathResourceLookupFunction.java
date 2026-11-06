@@ -30,6 +30,7 @@ import org.springframework.http.server.PathContainer;
 import org.springframework.util.Assert;
 import org.springframework.util.ResourceUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriUtils;
 import org.springframework.web.util.pattern.PathPattern;
 import org.springframework.web.util.pattern.PathPatternParser;
 
@@ -85,6 +86,10 @@ class PathResourceLookupFunction implements Function<ServerRequest, Mono<Resourc
 	}
 
 	private String processPath(String path) {
+		return normalizePath(cleanLeadingSlash(path));
+	}
+
+	private String cleanLeadingSlash(String path) {
 		boolean slash = false;
 		for (int i = 0; i < path.length(); i++) {
 			if (path.charAt(i) == '/') {
@@ -101,6 +106,30 @@ class PathResourceLookupFunction implements Function<ServerRequest, Mono<Resourc
 		return (slash ? "/" : "");
 	}
 
+	private static String normalizePath(String path) {
+		String result = path;
+		result = decode(result);
+		if (result.contains("%")) {
+			result = decode(result);
+		}
+		if (!StringUtils.hasText(result)) {
+			return result;
+		}
+		if (result.contains("../")) {
+			return StringUtils.cleanPath(result);
+		}
+		return path;
+	}
+
+	private static String decode(String path) {
+		try {
+			return UriUtils.decode(path, StandardCharsets.UTF_8);
+		}
+		catch (Exception ex) {
+			return "";
+		}
+	}
+
 	private boolean isInvalidPath(String path) {
 		if (path.contains("WEB-INF") || path.contains("META-INF")) {
 			return true;
@@ -111,10 +140,10 @@ class PathResourceLookupFunction implements Function<ServerRequest, Mono<Resourc
 				return true;
 			}
 		}
-		if (path.contains("..") && StringUtils.cleanPath(path).contains("../")) {
-			return true;
-		}
-		return false;
+		// Unlike ResourceWebHandler, processPath does not replace backslashes here,
+		// so check for "..\" sequences as well, without StringUtils#cleanPath which
+		// would cancel the ".." against an empty path segment
+		return StringUtils.replace(path, "\\", "/").contains("../");
 	}
 
 	private boolean isResourceUnderLocation(Resource resource) throws IOException {

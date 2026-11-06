@@ -17,13 +17,18 @@
 package org.springframework.web.servlet.function;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.web.testfixture.servlet.MockHttpServletRequest;
 
@@ -88,6 +93,47 @@ public class PathResourceLookupFunctionTests {
 
 		Optional<Resource> result = function.apply(request);
 		assertThat(result.isPresent()).isFalse();
+	}
+
+	@Test  // CVE-2024-38819
+	public void rejectsEncodedPathTraversal(@TempDir Path temporaryFolder) throws Exception {
+		Files.write(temporaryFolder.resolve("secret.txt"), "secret".getBytes(StandardCharsets.UTF_8));
+		Path locationFolder = Files.createDirectory(temporaryFolder.resolve("public"));
+		Files.write(locationFolder.resolve("response.txt"), "public".getBytes(StandardCharsets.UTF_8));
+
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**",
+				new FileSystemResource(locationFolder.toString() + "/"));
+
+		// A legitimate resource under the location is still served
+		assertThat(function.apply(request("/resources/response.txt"))).isPresent();
+
+		// Encoded "//../": StringUtils#cleanPath cancels the ".." against the empty
+		// path segment, while the file system does not, escaping the location
+		assertThat(function.apply(request("/resources/%252F%252F..%252Fsecret.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%252F%252F%252E%252E%252Fsecret.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%2F%2F%2E%2E%2Fsecret.txt"))).isEmpty();
+
+		// Encoded and double encoded "../"
+		assertThat(function.apply(request("/resources/%2E%2E%2Fsecret.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%252E%252E%252Fsecret.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%2E%2E%2F%2E%2E%2Fsecret.txt"))).isEmpty();
+	}
+
+	@Test  // CVE-2024-38819
+	public void rejectsEncodedBackslashPathTraversal() throws Exception {
+		ClassPathResource location = new ClassPathResource("org/springframework/web/servlet/function/");
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**", location);
+
+		// Encoded "\\..\": StringUtils#cleanPath cancels the ".." against the empty
+		// path segment, while a file system with "\" as separator does not
+		assertThat(function.apply(request("/resources/%5C%5C..%5Cresponse.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%255C%255C..%255Cresponse.txt"))).isEmpty();
+		assertThat(function.apply(request("/resources/%255C%255C%252E%252E%255Cresponse.txt"))).isEmpty();
+	}
+
+	private ServerRequest request(String requestUri) {
+		return new DefaultServerRequest(
+				new MockHttpServletRequest("GET", requestUri), Collections.emptyList());
 	}
 
 	@Test

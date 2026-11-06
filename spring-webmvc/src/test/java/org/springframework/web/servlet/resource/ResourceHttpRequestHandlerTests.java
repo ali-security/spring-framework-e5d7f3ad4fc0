@@ -344,6 +344,39 @@ public class ResourceHttpRequestHandlerTests {
 		testInvalidPath("%2F%2F%2E%2E%2F%2F%2E%2E" + secretPath, handler);
 	}
 
+	@Test  // CVE-2024-38819
+	public void testInvalidEncodedPath() throws Exception {
+
+		// Use mock ResourceResolver: i.e. we're only testing upfront validations...
+
+		Resource resource = mock(Resource.class);
+		given(resource.getFilename()).willThrow(new AssertionError("Resource should not be resolved"));
+		given(resource.getInputStream()).willThrow(new AssertionError("Resource should not be resolved"));
+		ResourceResolver resolver = mock(ResourceResolver.class);
+		given(resolver.resolveResource(any(), any(), any(), any())).willReturn(resource);
+
+		ResourceHttpRequestHandler handler = new ResourceHttpRequestHandler();
+		handler.setLocations(Collections.singletonList(new ClassPathResource("test/", getClass())));
+		handler.setResourceResolvers(Collections.singletonList(resolver));
+		handler.setServletContext(new TestServletContext());
+		handler.afterPropertiesSet();
+
+		// Encoded "../"
+		testInvalidPath("%2E%2E%2Ftestsecret/secret.txt", handler);
+		testInvalidPath("%2E%2E%2F%2E%2E%2Ftestsecret/secret.txt", handler);
+		testInvalidPath("test%2F..%2F..%2Ftestsecret/secret.txt", handler);
+
+		// Double encoded "../"
+		testInvalidPath("%252E%252E%252Ftestsecret/secret.txt", handler);
+		testInvalidPath("%252E%252E%252F%252E%252E%252Ftestsecret/secret.txt", handler);
+
+		// Encoded "//" ahead of "../": StringUtils#cleanPath cancels the ".." against
+		// the empty path segment, while the file system does not
+		testInvalidPath("%2F%2F..%2Ftestsecret/secret.txt", handler);
+		testInvalidPath("test%2F%2F..%2F..%2Ftestsecret/secret.txt", handler);
+		testInvalidPath("%2F%2F%2E%2E%2F%2F%2E%2E/testsecret/secret.txt", handler);
+	}
+
 	private void testInvalidPath(String requestPath, ResourceHttpRequestHandler handler) throws Exception {
 		this.request.setAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE, requestPath);
 		this.response = new MockHttpServletResponse();
