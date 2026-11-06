@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.util.Enumeration;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
@@ -49,10 +51,12 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.ReflectionUtils;
+import org.springframework.util.ResourceUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.util.xml.SimpleTransformErrorListener;
 import org.springframework.util.xml.TransformerUtils;
 import org.springframework.web.servlet.view.AbstractUrlBasedView;
+import org.springframework.web.util.UriUtils;
 import org.springframework.web.util.WebUtils;
 
 /**
@@ -462,16 +466,117 @@ public class XsltView extends AbstractUrlBasedView {
 	protected Source getStylesheetSource() {
 		String url = getUrl();
 		Assert.state(url != null, "'url' not set");
-
 		if (logger.isDebugEnabled()) {
 			logger.debug("Applying stylesheet [" + url + "]");
 		}
+		String location = normalizeInputPath(url);
+		if (shouldIgnoreInputPath(location)) {
+			throw new ApplicationContextException("Invalid XSLT stylesheet location '" + url + "'");
+		}
 		try {
-			Resource resource = obtainApplicationContext().getResource(url);
+			Resource resource = obtainApplicationContext().getResource(location);
 			return new StreamSource(resource.getInputStream(), resource.getURI().toASCIIString());
 		}
 		catch (IOException ex) {
 			throw new ApplicationContextException("Can't load XSLT stylesheet from '" + url + "'", ex);
+		}
+	}
+
+	/**
+	 * Normalize the given stylesheet location: replace backslashes with forward
+	 * slashes, collapse duplicate slashes and strip any leading whitespace or
+	 * control characters ahead of the first slash.
+	 * <p>Ported from {@code ResourceHandlerUtils}, which does not exist on this branch.
+	 */
+	private static String normalizeInputPath(String path) {
+		path = StringUtils.replace(path, "\\", "/");
+		path = cleanDuplicateSlashes(path);
+		return cleanLeadingSlash(path);
+	}
+
+	private static String cleanDuplicateSlashes(String path) {
+		StringBuilder sb = null;
+		char prev = 0;
+		for (int i = 0; i < path.length(); i++) {
+			char curr = path.charAt(i);
+			try {
+				if ((curr == '/') && (prev == '/')) {
+					if (sb == null) {
+						sb = new StringBuilder(path.substring(0, i));
+					}
+					continue;
+				}
+				if (sb != null) {
+					sb.append(path.charAt(i));
+				}
+			}
+			finally {
+				prev = curr;
+			}
+		}
+		return (sb != null ? sb.toString() : path);
+	}
+
+	private static String cleanLeadingSlash(String path) {
+		boolean slash = false;
+		for (int i = 0; i < path.length(); i++) {
+			if (path.charAt(i) == '/') {
+				slash = true;
+			}
+			else if (path.charAt(i) > ' ' && path.charAt(i) != 127) {
+				if (i == 0 || (i == 1 && slash)) {
+					return path;
+				}
+				return (slash ? "/" + path.substring(i) : path.substring(i));
+			}
+		}
+		return (slash ? "/" : "");
+	}
+
+	/**
+	 * Whether the given stylesheet location must be rejected: blank, pointing at
+	 * {@code WEB-INF}/{@code META-INF}, expressed as a URL, or escaping upwards -
+	 * checked both as given and after decoding, to catch encoded forms.
+	 * <p>Ported from {@code ResourceHandlerUtils}, which does not exist on this branch.
+	 */
+	private static boolean shouldIgnoreInputPath(String path) {
+		return (!StringUtils.hasText(path) || isInvalidPath(path) || isInvalidEncodedPath(path));
+	}
+
+	private static boolean isInvalidPath(String path) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
+			return true;
+		}
+		if (path.contains(":/")) {
+			String relativePath = (path.charAt(0) == '/' ? path.substring(1) : path);
+			if (ResourceUtils.isUrl(relativePath) || relativePath.startsWith("url:")) {
+				return true;
+			}
+		}
+		return path.contains("../");
+	}
+
+	private static boolean isInvalidEncodedPath(String path) {
+		String decodedPath = decode(path);
+		if (decodedPath.contains("%")) {
+			decodedPath = decode(decodedPath);
+		}
+		if (!StringUtils.hasText(decodedPath)) {
+			return true;
+		}
+		if (isInvalidPath(decodedPath)) {
+			return true;
+		}
+		return isInvalidPath(normalizeInputPath(decodedPath));
+	}
+
+	private static String decode(String path) {
+		try {
+			return UriUtils.decode(path, StandardCharsets.UTF_8);
+		}
+		catch (Exception ex) {
+			return "";
 		}
 	}
 
