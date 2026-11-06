@@ -19,13 +19,17 @@ package org.springframework.web.servlet.view;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.testfixture.servlet.MockHttpServletRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
  * @author Rick Evans
  * @author Juergen Hoeller
+ * @author Sebastien Deleuze
  */
 public class DefaultRequestToViewNameTranslatorTests {
 
@@ -119,6 +123,22 @@ public class DefaultRequestToViewNameTranslatorTests {
 		request.setRequestURI(CONTEXT_PATH + VIEW_NAME);
 		this.translator.setSuffix(null);
 		assertViewName(VIEW_NAME);
+	}
+
+	@Test
+	public void getViewNameWithRedirectPrefixFails() {
+		request.setRequestURI(CONTEXT_PATH + "/" + UrlBasedViewResolver.REDIRECT_URL_PREFIX + VIEW_NAME);
+		assertThatExceptionOfType(ResponseStatusException.class)
+				.isThrownBy(() -> this.translator.getViewName(this.request))
+				.satisfies(ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+	}
+
+	@Test
+	public void getViewNameWithForwardPrefixFails() {
+		request.setRequestURI(CONTEXT_PATH + "/" + UrlBasedViewResolver.FORWARD_URL_PREFIX + VIEW_NAME);
+		assertThatExceptionOfType(ResponseStatusException.class)
+				.isThrownBy(() -> this.translator.getViewName(this.request))
+				.satisfies(ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
 	}
 
 	@Test

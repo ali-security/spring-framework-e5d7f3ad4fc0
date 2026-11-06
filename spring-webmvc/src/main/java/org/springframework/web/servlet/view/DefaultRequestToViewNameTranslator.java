@@ -18,9 +18,11 @@ package org.springframework.web.servlet.view;
 
 import javax.servlet.http.HttpServletRequest;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.RequestToViewNameTranslator;
 import org.springframework.web.util.UrlPathHelper;
@@ -51,6 +53,7 @@ import org.springframework.web.util.UrlPathHelper;
  *
  * @author Rob Harrop
  * @author Juergen Hoeller
+ * @author Sebastien Deleuze
  * @since 2.0
  * @see org.springframework.web.servlet.RequestToViewNameTranslator
  * @see org.springframework.web.servlet.ViewResolver
@@ -163,13 +166,21 @@ public class DefaultRequestToViewNameTranslator implements RequestToViewNameTran
 	/**
 	 * Translates the request URI of the incoming {@link HttpServletRequest}
 	 * into the view name based on the configured parameters.
+	 * @throws ResponseStatusException with a 400 error code if the path contains a "redirect:" or a "forward:" prefix
 	 * @see org.springframework.web.util.UrlPathHelper#getLookupPathForRequest
 	 * @see #transformPath
 	 */
 	@Override
 	public String getViewName(HttpServletRequest request) {
 		String lookupPath = this.urlPathHelper.getLookupPathForRequest(request, HandlerMapping.LOOKUP_PATH);
-		return (this.prefix + transformPath(lookupPath) + this.suffix);
+		String viewName = this.prefix + transformPath(lookupPath) + this.suffix;
+		if (viewName.startsWith(UrlBasedViewResolver.REDIRECT_URL_PREFIX)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Rejected path '" + lookupPath + "' with 'redirect:' prefix");
+		}
+		if (viewName.startsWith(UrlBasedViewResolver.FORWARD_URL_PREFIX)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Rejected path '" + lookupPath + "' with 'forward:' prefix");
+		}
+		return viewName;
 	}
 
 	/**
@@ -180,7 +191,6 @@ public class DefaultRequestToViewNameTranslator implements RequestToViewNameTran
 	 * @return the transformed path, with slashes and extensions stripped
 	 * if desired
 	 */
-	@Nullable
 	protected String transformPath(String lookupPath) {
 		String path = lookupPath;
 		if (this.stripLeadingSlash && path.startsWith(SLASH)) {
