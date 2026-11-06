@@ -39,6 +39,7 @@ import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.EmbeddedValueResolverAware;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
@@ -353,6 +354,10 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 	public void afterPropertiesSet() throws Exception {
 		resolveResourceLocations();
 
+		for (Resource location : this.locations) {
+			checkResourceLocation(location);
+		}
+
 		if (logger.isWarnEnabled() && CollectionUtils.isEmpty(this.locations)) {
 			logger.warn("Locations list is empty. No resources will be served unless a " +
 					"custom ResourceResolver is configured as an alternative to PathResourceResolver.");
@@ -424,6 +429,20 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 					throw new IllegalArgumentException("Unexpected charset for non-UrlResource: " + resource);
 				}
 				this.locationCharsets.put(resource, charset);
+			}
+		}
+	}
+
+	/**
+	 * Warn if the given configured location is an unsafe root location that
+	 * exposes more than intended, i.e. the entire classpath.
+	 */
+	private void checkResourceLocation(@Nullable Resource location) {
+		if (location instanceof ClassPathResource) {
+			String path = ((ClassPathResource) location).getPath();
+			if (path.isEmpty() || "/".equals(path)) {
+				logger.warn("Resource location '" + location + "' is considered unsafe " +
+						"and should not be used as it provides access to the entire classpath.");
 			}
 		}
 	}
@@ -693,7 +712,8 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 	 * @since 3.0.6
 	 */
 	protected boolean isInvalidPath(String path) {
-		if (path.contains("WEB-INF") || path.contains("META-INF")) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
 			if (logger.isWarnEnabled()) {
 				logger.warn("Path with \"WEB-INF\" or \"META-INF\": [" + path + "]");
 			}

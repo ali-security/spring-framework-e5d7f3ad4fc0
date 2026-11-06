@@ -140,6 +140,35 @@ public class PathResourceLookupFunctionTests {
 		expectEmpty(function, "/resources/%5C%5C%2E%2E%5Cresponse.txt");
 	}
 
+	@Test  // CVE-2026-41843
+	public void rejectsProtectedDirectoryRegardlessOfCase(@TempDir Path temporaryFolder) throws Exception {
+		Path locationFolder = Files.createDirectory(temporaryFolder.resolve("public"));
+		Files.write(locationFolder.resolve("response.txt"), "public".getBytes(StandardCharsets.UTF_8));
+		Path webInf = Files.createDirectory(locationFolder.resolve("web-inf"));
+		Files.write(webInf.resolve("web.xml"), "secret".getBytes(StandardCharsets.UTF_8));
+		Path metaInf = Files.createDirectory(locationFolder.resolve("meta-inf"));
+		Files.write(metaInf.resolve("MANIFEST.MF"), "secret".getBytes(StandardCharsets.UTF_8));
+
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**",
+				new FileSystemResource(locationFolder.toString() + "/"));
+
+		// A legitimate resource under the location is still served
+		StepVerifier.create(function.apply(request("/resources/response.txt")))
+				.expectNextCount(1)
+				.expectComplete()
+				.verify();
+
+		// Lower/mixed case variants of the protected directories must be rejected
+		expectEmpty(function, "/resources/web-inf/web.xml");
+		expectEmpty(function, "/resources/Web-Inf/web.xml");
+		expectEmpty(function, "/resources/meta-inf/MANIFEST.MF");
+		expectEmpty(function, "/resources/Meta-Inf/MANIFEST.MF");
+
+		// ... including encoded variants
+		expectEmpty(function, "/resources/%77eb-inf/web.xml");
+		expectEmpty(function, "/resources/%6Deta-inf/MANIFEST.MF");
+	}
+
 	private void expectEmpty(PathResourceLookupFunction function, String requestUri) {
 		StepVerifier.create(function.apply(request(requestUri)))
 				.expectComplete()

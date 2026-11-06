@@ -19,13 +19,16 @@ package org.springframework.web.reactive.resource;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import reactor.core.publisher.Mono;
@@ -35,6 +38,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.lang.Nullable;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.util.ResourceUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
 
@@ -177,6 +181,9 @@ public class VersionResourceResolver extends AbstractResourceResolver {
 		}
 
 		String simplePath = versionStrategy.removeVersion(requestPath, candidate);
+		if (shouldIgnoreInputPath(simplePath)) {
+			return Mono.empty();
+		}
 		return chain.resolveResource(exchange, simplePath, locations)
 				.filterWhen(resource -> versionStrategy.getResourceVersion(resource)
 						.map(actual -> {
@@ -233,6 +240,80 @@ public class VersionResourceResolver extends AbstractResourceResolver {
 			return this.versionStrategyMap.get(matchingPatterns.get(0));
 		}
 		return null;
+	}
+
+	/**
+	 * Whether the given path, obtained after removing the version from the
+	 * request path, should be ignored rather than passed on to the rest of the
+	 * resolver chain. Removing the version may synthesize path traversal
+	 * sequences that were not present in the original request path.
+	 * @param path the path to check
+	 * @return {@code true} if the path must not be resolved
+	 */
+	private boolean shouldIgnoreInputPath(String path) {
+		return (!StringUtils.hasText(path) || isInvalidPath(path) || isInvalidEncodedPath(path));
+	}
+
+	/**
+	 * Check whether the given path contains invalid escape sequences.
+	 */
+	private boolean isInvalidEncodedPath(String path) {
+		if (path.contains("%")) {
+			try {
+				// Use URLDecoder (vs UriUtils) to preserve potentially decoded UTF-8 chars
+				String decodedPath = URLDecoder.decode(path, "UTF-8");
+				if (isInvalidPath(decodedPath)) {
+					return true;
+				}
+				decodedPath = StringUtils.replace(decodedPath, "\\", "/");
+				if (isInvalidPath(decodedPath)) {
+					return true;
+				}
+			}
+			catch (IllegalArgumentException ex) {
+				// May not be possible to decode...
+			}
+			catch (UnsupportedEncodingException ex) {
+				// Should never happen...
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Identifies invalid resource paths, mirroring the checks applied by
+	 * {@link ResourceWebHandler#isInvalidPath(String)}.
+	 */
+	private boolean isInvalidPath(String path) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
+			if (logger.isWarnEnabled()) {
+				logger.warn("Path with \"WEB-INF\" or \"META-INF\": [" + path + "]");
+			}
+			return true;
+		}
+		if (path.contains(":/")) {
+			String relativePath = (path.charAt(0) == '/' ? path.substring(1) : path);
+			if (ResourceUtils.isUrl(relativePath) || relativePath.startsWith("url:")) {
+				if (logger.isWarnEnabled()) {
+					logger.warn("Path represents URL or has \"url:\" prefix: [" + path + "]");
+				}
+				return true;
+			}
+		}
+		if (path.contains("../")) {
+			if (logger.isWarnEnabled()) {
+				logger.warn("Path contains \"../\" after call to StringUtils#cleanPath: [" + path + "]");
+			}
+			return true;
+		}
+		if (path.contains("..") && StringUtils.cleanPath(path).contains("../")) {
+			if (logger.isWarnEnabled()) {
+				logger.warn("Path contains \"..\" that resolves outside the location: [" + path + "]");
+			}
+			return true;
+		}
+		return false;
 	}
 
 

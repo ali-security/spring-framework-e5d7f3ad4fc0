@@ -19,6 +19,7 @@ package org.springframework.web.reactive.function.server;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.function.Function;
 
 import reactor.core.publisher.Mono;
@@ -131,7 +132,8 @@ class PathResourceLookupFunction implements Function<ServerRequest, Mono<Resourc
 	}
 
 	private boolean isInvalidPath(String path) {
-		if (path.contains("WEB-INF") || path.contains("META-INF")) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
 			return true;
 		}
 		if (path.contains(":/")) {

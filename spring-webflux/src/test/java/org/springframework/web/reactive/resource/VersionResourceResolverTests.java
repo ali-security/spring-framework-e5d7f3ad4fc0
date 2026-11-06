@@ -34,6 +34,7 @@ import org.springframework.web.testfixture.http.server.reactive.MockServerHttpRe
 import org.springframework.web.testfixture.server.MockServerWebExchange;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -176,6 +177,65 @@ public class VersionResourceResolverTests {
 		verify(this.versionStrategy, times(1)).getResourceVersion(expected);
 		assertThat(actual).isInstanceOf(HttpResource.class);
 		assertThat(((HttpResource) actual).getResponseHeaders().getETag()).isEqualTo(("\"" + version + "\""));
+	}
+
+	@Test  // CVE-2026-41843
+	public void resolveResourceWithTraversalSynthesizedByVersionRemoval() {
+		// "-sha" occurs twice; deleting *every* occurrence turns this into "../testsecret/secret.txt"
+		String versionFile = ".-sha.-sha/testsecret/secret";
+		String traversalPath = "../testsecret/secret";
+		ContentVersionStrategy strategy = new ContentVersionStrategy();
+
+		// The exploit itself: the version is extracted, and removing it must not synthesize "../"
+		assertThat(strategy.extractVersion(versionFile)).isEqualTo("sha");
+		assertThat(strategy.removeVersion(versionFile, "sha")).doesNotContain("../");
+
+		given(this.chain.resolveResource(any(), any(), any())).willReturn(Mono.empty());
+
+		this.resolver.setStrategyMap(Collections.singletonMap("/**", strategy));
+		Resource actual = this.resolver
+				.resolveResourceInternal(null, versionFile, this.locations, this.chain)
+				.block(Duration.ofMillis(5000));
+
+		assertThat((Object) actual).isNull();
+		// The traversal path must never reach the rest of the chain
+		verify(this.chain, never()).resolveResource(null, traversalPath, this.locations);
+	}
+
+	@Test  // CVE-2026-41843
+	public void resolveResourceIgnoresTraversalPathAfterVersionRemoved() {
+		String versionFile = "bar-version.css";
+		String version = "version";
+		String traversalPath = "../testsecret/secret.txt";
+		given(this.chain.resolveResource(null, versionFile, this.locations)).willReturn(Mono.empty());
+		given(this.versionStrategy.extractVersion(versionFile)).willReturn(version);
+		given(this.versionStrategy.removeVersion(versionFile, version)).willReturn(traversalPath);
+
+		this.resolver.setStrategyMap(Collections.singletonMap("/**", this.versionStrategy));
+		Resource actual = this.resolver
+				.resolveResourceInternal(null, versionFile, this.locations, this.chain)
+				.block(Duration.ofMillis(5000));
+
+		assertThat((Object) actual).isNull();
+		verify(this.chain, never()).resolveResource(null, traversalPath, this.locations);
+	}
+
+	@Test  // CVE-2026-41843
+	public void resolveResourceIgnoresProtectedDirectoryAfterVersionRemoved() {
+		String versionFile = "bar-version.css";
+		String version = "version";
+		String protectedPath = "web-inf/web.xml";
+		given(this.chain.resolveResource(null, versionFile, this.locations)).willReturn(Mono.empty());
+		given(this.versionStrategy.extractVersion(versionFile)).willReturn(version);
+		given(this.versionStrategy.removeVersion(versionFile, version)).willReturn(protectedPath);
+
+		this.resolver.setStrategyMap(Collections.singletonMap("/**", this.versionStrategy));
+		Resource actual = this.resolver
+				.resolveResourceInternal(null, versionFile, this.locations, this.chain)
+				.block(Duration.ofMillis(5000));
+
+		assertThat((Object) actual).isNull();
+		verify(this.chain, never()).resolveResource(null, protectedPath, this.locations);
 	}
 
 	@Test

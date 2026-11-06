@@ -19,6 +19,7 @@ package org.springframework.web.servlet.function;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -130,7 +131,8 @@ class PathResourceLookupFunction implements Function<ServerRequest, Optional<Res
 	}
 
 	private boolean isInvalidPath(String path) {
-		if (path.contains("WEB-INF") || path.contains("META-INF")) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
 			return true;
 		}
 		if (path.contains(":/")) {

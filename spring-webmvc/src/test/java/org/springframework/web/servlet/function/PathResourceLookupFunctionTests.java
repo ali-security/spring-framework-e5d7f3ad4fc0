@@ -131,6 +131,32 @@ public class PathResourceLookupFunctionTests {
 		assertThat(function.apply(request("/resources/%255C%255C%252E%252E%255Cresponse.txt"))).isEmpty();
 	}
 
+	@Test  // CVE-2026-41843
+	public void rejectsProtectedDirectoryRegardlessOfCase(@TempDir Path temporaryFolder) throws Exception {
+		Path locationFolder = Files.createDirectory(temporaryFolder.resolve("public"));
+		Files.write(locationFolder.resolve("response.txt"), "public".getBytes(StandardCharsets.UTF_8));
+		Path webInf = Files.createDirectory(locationFolder.resolve("web-inf"));
+		Files.write(webInf.resolve("web.xml"), "secret".getBytes(StandardCharsets.UTF_8));
+		Path metaInf = Files.createDirectory(locationFolder.resolve("meta-inf"));
+		Files.write(metaInf.resolve("MANIFEST.MF"), "secret".getBytes(StandardCharsets.UTF_8));
+
+		PathResourceLookupFunction function = new PathResourceLookupFunction("/resources/**",
+				new FileSystemResource(locationFolder.toString() + "/"));
+
+		// A legitimate resource under the location is still served
+		assertThat(function.apply(request("/resources/response.txt"))).isPresent();
+
+		// Lower/mixed case variants of the protected directories must be rejected
+		assertThat(function.apply(request("/resources/web-inf/web.xml"))).isEmpty();
+		assertThat(function.apply(request("/resources/Web-Inf/web.xml"))).isEmpty();
+		assertThat(function.apply(request("/resources/meta-inf/MANIFEST.MF"))).isEmpty();
+		assertThat(function.apply(request("/resources/Meta-Inf/MANIFEST.MF"))).isEmpty();
+
+		// ... including encoded variants
+		assertThat(function.apply(request("/resources/%77eb-inf/web.xml"))).isEmpty();
+		assertThat(function.apply(request("/resources/%6Deta-inf/MANIFEST.MF"))).isEmpty();
+	}
+
 	private ServerRequest request(String requestUri) {
 		return new DefaultServerRequest(
 				new MockHttpServletRequest("GET", requestUri), Collections.emptyList());

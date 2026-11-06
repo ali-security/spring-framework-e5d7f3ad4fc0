@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -35,6 +36,7 @@ import reactor.core.publisher.Mono;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.codec.Hints;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.http.CacheControl;
@@ -244,6 +246,10 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 	public void afterPropertiesSet() throws Exception {
 		resolveResourceLocations();
 
+		for (Resource location : this.locations) {
+			checkResourceLocation(location);
+		}
+
 		if (logger.isWarnEnabled() && CollectionUtils.isEmpty(this.locations)) {
 			logger.warn("Locations list is empty. No resources will be served unless a " +
 					"custom ResourceResolver is configured as an alternative to PathResourceResolver.");
@@ -279,6 +285,20 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 		for (String location : this.locationValues) {
 			Resource resource = this.resourceLoader.getResource(location);
 			this.locations.add(resource);
+		}
+	}
+
+	/**
+	 * Warn if the given configured location is an unsafe root location that
+	 * exposes more than intended, i.e. the entire classpath.
+	 */
+	private void checkResourceLocation(@Nullable Resource location) {
+		if (location instanceof ClassPathResource) {
+			String path = ((ClassPathResource) location).getPath();
+			if (path.isEmpty() || "/".equals(path)) {
+				logger.warn("Resource location '" + location + "' is considered unsafe " +
+						"and should not be used as it provides access to the entire classpath.");
+			}
 		}
 	}
 
@@ -521,7 +541,8 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 	 * @return {@code true} if the path is invalid, {@code false} otherwise
 	 */
 	protected boolean isInvalidPath(String path) {
-		if (path.contains("WEB-INF") || path.contains("META-INF")) {
+		String pathLowerCase = path.toLowerCase(Locale.ROOT);
+		if (pathLowerCase.contains("web-inf") || pathLowerCase.contains("meta-inf")) {
 			if (logger.isWarnEnabled()) {
 				logger.warn("Path with \"WEB-INF\" or \"META-INF\": [" + path + "]");
 			}

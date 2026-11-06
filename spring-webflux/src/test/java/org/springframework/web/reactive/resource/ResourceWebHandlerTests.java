@@ -301,6 +301,34 @@ public class ResourceWebHandlerTests {
 		testInvalidPath("%2F%2F%2E%2E%2F%2F%2E%2E/testsecret/secret.txt", handler);
 	}
 
+	@Test  // CVE-2026-41843
+	public void testInvalidPathWithCaseInsensitiveProtectedDirectory() throws Exception {
+
+		// Use mock ResourceResolver: i.e. we're only testing upfront validations...
+
+		Resource resource = mock(Resource.class);
+		given(resource.getFilename()).willThrow(new AssertionError("Resource should not be resolved"));
+		given(resource.getInputStream()).willThrow(new AssertionError("Resource should not be resolved"));
+		ResourceResolver resolver = mock(ResourceResolver.class);
+		given(resolver.resolveResource(any(), any(), any(), any())).willReturn(Mono.just(resource));
+
+		ResourceWebHandler handler = new ResourceWebHandler();
+		handler.setLocations(Collections.singletonList(new ClassPathResource("test/", getClass())));
+		handler.setResourceResolvers(Collections.singletonList(resolver));
+		handler.afterPropertiesSet();
+
+		// On case-insensitive file systems these reach the same files as "WEB-INF" / "META-INF"
+		testInvalidPath("web-inf/web.xml", handler);
+		testInvalidPath("/web-inf/web.xml", handler);
+		testInvalidPath("Web-Inf/web.xml", handler);
+		testInvalidPath("meta-inf/MANIFEST.MF", handler);
+		testInvalidPath("/Meta-Inf/MANIFEST.MF", handler);
+
+		// ... and encoded variants
+		testInvalidPath("%77eb-inf/web.xml", handler);
+		testInvalidPath("%6Deta-inf/MANIFEST.MF", handler);
+	}
+
 	private void testInvalidPath(String requestPath, ResourceWebHandler handler) {
 		ServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get(""));
 		setPathWithinHandlerMapping(exchange, requestPath);
