@@ -18,9 +18,11 @@ package org.springframework.web.servlet.mvc;
 
 import org.junit.jupiter.api.Test;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.ui.ModelMap;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.DispatcherServlet;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.ModelAndView;
@@ -28,6 +30,7 @@ import org.springframework.web.testfixture.servlet.MockHttpServletRequest;
 import org.springframework.web.testfixture.servlet.MockHttpServletResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
  * @author Juergen Hoeller
@@ -186,6 +189,26 @@ public class UrlFilenameViewControllerTests {
 		assertThat(mv.getViewName()).isEqualTo("index");
 		assertThat(mv.getModel().size()).isEqualTo(1);
 		assertThat(mv.getModel().get("name")).isEqualTo("value");
+	}
+
+	@Test  // CVE-2026-47887
+	public void withRedirectPrefix() {
+		UrlFilenameViewController ctrl = new UrlFilenameViewController();
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/redirect:index");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		assertThatExceptionOfType(ResponseStatusException.class)
+				.isThrownBy(() -> ctrl.handleRequest(request, response))
+				.satisfies(ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+	}
+
+	@Test  // CVE-2026-47887
+	public void withForwardPrefix() {
+		UrlFilenameViewController ctrl = new UrlFilenameViewController();
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/forward:index");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		assertThatExceptionOfType(ResponseStatusException.class)
+				.isThrownBy(() -> ctrl.handleRequest(request, response))
+				.satisfies(ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
 	}
 
 	private void exposePathInMapping(MockHttpServletRequest request, String mapping) {
